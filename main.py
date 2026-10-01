@@ -1,11 +1,10 @@
 from fastapi import FastAPI
 from app.routers import router
+from config.logging_config import setup_logging
 import logging
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(levelname)s - %(message)s"
-)
+# Configurar logging estructurado en JSON (Twelve-Factor: Factor 11)
+setup_logging()
 logger = logging.getLogger(__name__)
 
 app = FastAPI(title="ms-pdf-extract", description="Microservicio de extracción de texto de PDF")
