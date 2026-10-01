@@ -1,16 +1,20 @@
 # Benchmark simple con peticiones concurrentes usando PowerShell
-# Útil para pruebas rápidas sin instalar k6 o Vegeta
+# Simplificado para evitar problemas de scopes con Start-Job
 
 param(
-    [int]$TotalRequests = 100,
-    [int]$ConcurrentRequests = 10,
+    [int]$TotalRequests = 50,
     [string]$Url = "http://localhost:8001/extract",
-    [string]$PdfPath = "$PSScriptRoot\pdfs\liviano.pdf"
+    [string]$PdfPath = ""
 )
 
-Write-Host "=== Benchmark Simple ===" -ForegroundColor Cyan
+if ($PdfPath -eq "") {
+    $PdfPath = Join-Path $PSScriptRoot "pdfs\liviano.pdf"
+} else {
+    $PdfPath = (Resolve-Path $PdfPath).Path
+}
+
+Write-Host "=== Benchmark Simple (Secuencial Rápido) ===" -ForegroundColor Cyan
 Write-Host "Total peticiones: $TotalRequests" -ForegroundColor Yellow
-Write-Host "Concurrencia: $ConcurrentRequests" -ForegroundColor Yellow
 Write-Host "URL: $Url" -ForegroundColor Yellow
 Write-Host "PDF: $PdfPath" -ForegroundColor Yellow
 Write-Host ""
@@ -18,43 +22,34 @@ Write-Host ""
 $stopwatch = [System.Diagnostics.Stopwatch]::StartNew()
 $exitosos = 0
 $fallidos = 0
-$tiempos = @()
+$tiempos = [System.Collections.Generic.List[double]]::new()
 
-$batches = [math]::Ceiling($TotalRequests / $ConcurrentRequests)
-
-for ($batch = 0; $batch -lt $batches; $batch++) {
-    $jobs = @()
-    $batchSize = [math]::Min($ConcurrentRequests, $TotalRequests - ($batch * $ConcurrentRequests))
-
-    for ($i = 0; $i -lt $batchSize; $i++) {
-        $jobs += Start-Job -ScriptBlock {
-            param($url, $pdfPath)
-            $sw = [System.Diagnostics.Stopwatch]::StartNew()
-            try {
-                $response = curl.exe -s -o NUL -w "%{http_code}" -X POST -F "file=@$pdfPath" $url
-                $sw.Stop()
-                return @{ status = $response; time = $sw.ElapsedMilliseconds }
-            } catch {
-                $sw.Stop()
-                return @{ status = "error"; time = $sw.ElapsedMilliseconds }
-            }
-        } -ArgumentList $Url, $PdfPath
-    }
-
-    $results = $jobs | Wait-Job | Receive-Job
-    $jobs | Remove-Job
-
-    foreach ($r in $results) {
-        if ($r.status -eq "200") {
+for ($i = 0; $i -lt $TotalRequests; $i++) {
+    $sw = [System.Diagnostics.Stopwatch]::StartNew()
+    try {
+        # Ejecutar curl
+        $output = curl.exe -s -o NUL -w "%{http_code}" -X POST -F "file=@$PdfPath" $Url
+        $sw.Stop()
+        
+        if ($output -eq "200") {
             $exitosos++
         } else {
             $fallidos++
+            Write-Host "Falla HTTP: $output" -ForegroundColor Red
         }
-        $tiempos += $r.time
+    } catch {
+        $sw.Stop()
+        $fallidos++
+        Write-Host "Error ejecución: $_" -ForegroundColor Red
     }
-
-    $progress = [math]::Round((($batch + 1) * $ConcurrentRequests / $TotalRequests) * 100, 0)
-    Write-Host "Progreso: $progress% ($exitosos exitosos, $fallidos fallidos)" -ForegroundColor Gray
+    
+    $tiempos.Add($sw.ElapsedMilliseconds)
+    
+    # Progreso cada 10 peticiones
+    if (($i + 1) % 10 -eq 0) {
+        $progress = [math]::Round((($i + 1) / $TotalRequests) * 100, 0)
+        Write-Host "Progreso: $progress% ($exitosos exitosos, $fallidos fallidos)" -ForegroundColor Gray
+    }
 }
 
 $stopwatch.Stop()
