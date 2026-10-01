@@ -7,7 +7,13 @@ from service.extract_service import extraer_texto
 from service.summary_client import solicitar_resumen
 from app.models.extract_response import ExtractResponse
 from app.models.extract_and_summarize_response import ExtractAndSummarizeResponse
+import asyncio
 
+# Semáforo para limitar procesamiento concurrente (backpressure)
+# Si se supera este límite, devuelve 503 en lugar de acumular y explotar
+MAX_CONCURRENT_EXTRACTIONS = 10
+_extraction_semaphore = asyncio.Semaphore(MAX_CONCURRENT_EXTRACTIONS)
+ 
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
@@ -47,8 +53,18 @@ async def extract_text(file: UploadFile = File(...)):
             detail=f"El archivo es demasiado grande. Máximo permitido: {settings.max_file_size_mb}MB."
         )
 
-    # Delegamos al service
-    resultado = extraer_texto(contenido)
+    # Backpressure: si hay demasiadas extracciones concurrentes, rechazar
+    if _extraction_semaphore.locked():
+        logger.warning("Backpressure activado: demasiadas extracciones concurrentes")
+        raise HTTPException(
+            status_code=503,
+            detail="Servicio temporalmente saturado. Intente nuevamente en unos segundos."
+        )
+
+    async with _extraction_semaphore:
+        # Ejecutar en thread pool para no bloquear el event loop (CPU-bound)
+        loop = asyncio.get_event_loop()
+        resultado = await loop.run_in_executor(None, extraer_texto, contenido)
 
     duration = round((time.time() - start) * 1000, 2)
     logger.info(f"Extracción exitosa: {resultado['page_count']} páginas - {duration}ms")
@@ -79,8 +95,9 @@ async def extract_and_summarize(file: UploadFile = File(...)):
             detail=f"El archivo es demasiado grande. Máximo permitido: {settings.max_file_size_mb}MB."
         )
 
-    # 1. Extraer texto (reutilizar lógica existente)
-    resultado_extraccion = extraer_texto(contenido)
+    # 1. Extraer texto en thread pool (CPU-bound → no bloquear event loop)
+    loop = asyncio.get_event_loop()
+    resultado_extraccion = await loop.run_in_executor(None, extraer_texto, contenido)
 
     logger.info(f"Texto extraído: {resultado_extraccion['page_count']} páginas. Solicitando resumen a ms-ia-summary...")
 
