@@ -1,16 +1,16 @@
 import io
-import pdfplumber
+import fitz  # pymupdf
 
 
 def extraer_texto(contenido: bytes) -> dict:
-    """Extrae texto de un PDF y devuelve el contenido y la cantidad de páginas."""
+    """Extrae texto de un PDF usando PyMuPDF (más rápido que pdfplumber para alto rendimiento)."""
     texto_completo = ""
     cantidad_paginas = 0
 
-    with pdfplumber.open(io.BytesIO(contenido)) as pdf:
-        cantidad_paginas = len(pdf.pages)
-        for pagina in pdf.pages:
-            texto_extraido = pagina.extract_text()
+    with fitz.open(stream=contenido, filetype="pdf") as pdf:
+        cantidad_paginas = len(pdf)
+        for pagina in pdf:
+            texto_extraido = pagina.get_text()
             if texto_extraido:
                 texto_completo += texto_extraido + "\n"
 
